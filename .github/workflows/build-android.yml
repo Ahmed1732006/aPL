@@ -1,0 +1,106 @@
+name: Build IN THE VOID APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'index.html'
+      - '2.html'
+      - 'app/**'
+      - '*.html'
+      - '*.js'
+      - '*.png'
+      - 'manifest.webmanifest'
+      - 'sw.js'
+      - 'package.json'
+      - 'capacitor.config.json'
+      - 'scripts/**'
+      - 'resources/**'
+      - 'android-debug.keystore'
+      - 'google-services.json'
+      - '.github/workflows/build-android.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare web bundle (also vendors CDN libraries for offline use)
+        run: npm run build:web
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      # Use the SAME debug keystore on every build instead of a fresh
+      # random one, so a new APK is recognized by Android as an update
+      # to the previous install (no more "uninstall the old app first").
+      - name: Install persistent debug signing key
+        run: |
+          mkdir -p ~/.android
+          if [ -f "android-debug.keystore" ]; then
+            cp android-debug.keystore ~/.android/debug.keystore
+            echo "Using the committed persistent debug keystore."
+          else
+            echo "::warning::android-debug.keystore not found in repo root - builds will use a throwaway key and users will need to uninstall the previous APK on every update."
+          fi
+
+      # Optional: only runs if you've added google-services.json at the
+      # repo root (Firebase Console -> Project settings -> your Android
+      # app -> download google-services.json). Needed for push
+      # notifications / broadcast messages to work.
+      - name: Wire up Firebase (google-services.json)
+        run: |
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+            echo "google-services.json installed - push notifications enabled."
+          else
+            echo "::warning::google-services.json not found at repo root - push notifications will not work until you add it."
+          fi
+
+      # Generates the native launcher icon + splash screen from
+      # resources/icon.png and resources/splash.png for every density,
+      # replacing the default Capacitor icon/splash.
+      - name: Generate native icon & splash screen
+        run: npx @capacitor/assets generate --android || echo "::warning::icon/splash generation failed, keeping previous native assets"
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # Every build gets a higher versionCode (based on the run number)
+      # so Android always treats a new APK as a proper update.
+      - name: Bump versionCode
+        working-directory: android/app
+        run: |
+          sed -i "s/versionCode [0-9]\+/versionCode ${{ github.run_number }}/" build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" build.gradle
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: IN_THE_VOID-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
