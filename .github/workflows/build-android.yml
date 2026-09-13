@@ -6,7 +6,7 @@ on:
     paths:
       - 'index.html'
       - '2.html'
-      - 'app/**'
+      - 'app/'
       - '*.html'
       - '*.js'
       - '*.png'
@@ -14,7 +14,7 @@ on:
       - 'sw.js'
       - 'package.json'
       - 'capacitor.config.json'
-      - 'scripts/**'
+      - 'scripts/'
       - 'resources/**'
       - 'android-debug.keystore'
       - 'google-services.json'
