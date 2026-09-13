@@ -4,37 +4,83 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'index.html'
-      - '2.html'
-      - 'app/'
-      - '*.html'
-      - '*.js'
-      - '*.png'
-      - 'manifest.webmanifest'
-      - 'sw.js'
-      - 'package.json'
-      - 'capacitor.config.json'
-      - 'scripts/'
-      - 'resources/**'
-      - 'android-debug.keystore'
-      - 'google-services.json'
+      - '**'
       - '.github/workflows/build-android.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install
+
+      - name: Prepare web bundle
+        run: npm run build:web
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Install persistent debug signing key
+        run: |
+          mkdir -p ~/.android
+          if [ -f "android-debug.keystore" ]; then
+            cp android-debug.keystore ~/.android/debug.keystore
+            echo "Using persistent debug keystore."
+          else
+            echo "::warning::android-debug.keystore not found."
+          fi
+
+      - name: Wire up Firebase
+        run: |
+          if [ -f "google-services.json" ]; then
+            cp google-services.json android/app/google-services.json
+            echo "Firebase configuration installed."
+          else
+            echo "::warning::google-services.json not found."
+          fi
+
+      - name: Generate native icon and splash
+        run: |
+          npx @capacitor/assets generate --android || \
+          echo "::warning::Icon/splash generation failed."
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Set version
+        working-directory: android/app
+        run: |
+          sed -i "s/versionCode [0-9]\+/versionCode ${{ github.run_number }}/" build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" build.gradle
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: IN_THE_VOID-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error        run: npm install
 
       - name: Prepare web bundle (also vendors CDN libraries for offline use)
         run: npm run build:web
